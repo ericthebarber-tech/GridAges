@@ -65,7 +65,7 @@ class MultiAgentMicrogrids(NetworkedGridEnv):
         mg3.add_sgen([mg3_dg1, mg3_pv1, mg3_wt1])
         mg3.add_dataset(read_data("train", 'AVA', 'NP15', '0096WD_7_N001'))
         net = mg3.add_to(net, 'DSO Bus 856')
-        pp.runpp(net)
+        pp.runpp(net, numba=False)
 
         self.net = net
         self.possible_agents = {a.name:a for a in [ mg1, mg2, mg3]}

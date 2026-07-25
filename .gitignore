@@ -133,6 +133,8 @@ dmypy.json
 
 # Project Specific
 /artifacts/
+*.zip
+*.pkl
 *.egg-info/*
 .DS_Store
 .idea/
@@ -144,6 +146,10 @@ results/*
 *.xlsx
 .flake8
 wandb/*
+
+# Generated reinforcement-learning experiment outputs
+/examples/multi_agent/coordinated_dispatch/rllib_mappo_networked_mgs/logs/
+/examples/multi_agent/ctde_marl_networked_mgs/logs/
 
 # Data files (to be moved after week 6)
 data/*.pkl

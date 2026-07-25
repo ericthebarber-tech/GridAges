@@ -18,7 +18,9 @@ from ray.tune.registry import get_trainable_cls, register_env
 from ray.tune.logger import UnifiedLogger
 
 import os
-LOG_DIR = os.path.abspath("./ray_logs")
+from pathlib import Path
+
+LOG_DIR = str(Path(__file__).resolve().parent / "logs" / "ray")
 
 def logger_creator(config):
     os.makedirs(LOG_DIR, exist_ok=True)
