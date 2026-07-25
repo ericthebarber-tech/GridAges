@@ -330,8 +330,14 @@ class NetworkedGridEnv(ParallelEnv):
         obs = self._get_obs(alive)
 
         # infos: expose safety by default (and converged flag)
-        infos = {name: {"safety": safety.get(name, 0.0), "converged": bool(self.net.get("converged", False))}
-                 for name in alive}
+        infos = {
+            name: {
+                "safety": safety.get(name, 0.0),
+                "operating_cost": float(self._agent_dict[name].cost),
+                "converged": bool(self.net.get("converged", False)),
+            }
+            for name in alive
+        }
 
         # Update PettingZoo live agent list for NEXT step
         self.agents = [a for a in alive if not (terminations.get(a, False) or truncations.get(a, False))]

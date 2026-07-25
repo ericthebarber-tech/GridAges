@@ -1,0 +1,33 @@
+{
+  "load_scale": 0.2,
+  "agent_configs": {
+    "MG1": {
+      "network_factory": "gridages.networks.ieee13:IEEE13Bus",
+      "connection_bus": "DSO Bus 822",
+      "ess_bus": "Bus 645",
+      "dg_bus": "Bus 675",
+      "pv_bus": "Bus 652",
+      "wind_bus": "Bus 645"
+    },
+    "MG2": {
+      "network_factory": "gridages.networks.ieee13:IEEE13Bus",
+      "connection_bus": "DSO Bus 848",
+      "ess_bus": "Bus 645",
+      "dg_bus": "Bus 675",
+      "pv_bus": "Bus 652",
+      "wind_bus": "Bus 645"
+    },
+    "MG3": {
+      "network_factory": "gridages.networks.ieee34:IEEE34Bus",
+      "connection_bus": "DSO Bus 800",
+      "ess_bus": "Bus 822",
+      "dg_bus": "Bus 848",
+      "pv_bus": "Bus 856",
+      "wind_bus": "Bus 840",
+      "load_scale": 0.01,
+      "dg_max_p_mw": 0.8,
+      "dg_sn_mva": 1.0,
+      "dg_cost": [100, 45.0, 0.42]
+    }
+  }
+}

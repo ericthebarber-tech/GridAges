@@ -1,0 +1,29 @@
+{
+  "load_scale": 0.2,
+  "agent_configs": {
+    "MG1": {
+      "dg_max_p_mw": 0.6,
+      "dg_sn_mva": null,
+      "dg_cost": [100, 51.6, 0.4615],
+      "ess_max_p_mw": 0.5,
+      "pv_max_p_mw": 0.1,
+      "wind_max_p_mw": 0.1
+    },
+    "MG2": {
+      "dg_max_p_mw": 0.6,
+      "dg_sn_mva": null,
+      "dg_cost": [100, 51.6, 0.4615],
+      "ess_max_p_mw": 0.5,
+      "pv_max_p_mw": 0.1,
+      "wind_max_p_mw": 0.1
+    },
+    "MG3": {
+      "dg_max_p_mw": 0.6,
+      "dg_sn_mva": null,
+      "dg_cost": [100, 51.6, 0.4615],
+      "ess_max_p_mw": 0.5,
+      "pv_max_p_mw": 0.1,
+      "wind_max_p_mw": 0.1
+    }
+  }
+}
