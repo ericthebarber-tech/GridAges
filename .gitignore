@@ -148,8 +148,11 @@ results/*
 wandb/*
 
 # Generated reinforcement-learning experiment outputs
+/ray_logs/
+/sb3_logs/
 /examples/multi_agent/coordinated_dispatch/rllib_mappo_networked_mgs/logs/
 /examples/multi_agent/ctde_marl_networked_mgs/logs/
+/examples/multi_agent/benchmarl_networked_mgs/logs/
 
 # Data files (to be moved after week 6)
 data/*.pkl
