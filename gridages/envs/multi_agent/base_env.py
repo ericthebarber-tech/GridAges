@@ -1,5 +1,9 @@
 import numpy as np
 import pandapower as pp
+try:
+    from pandapower import fuse_buses, get_element_index, merge_nets
+except ImportError:  # pandapower >= 3.0
+    from pandapower.toolbox import fuse_buses, get_element_index, merge_nets
 from pettingzoo.utils.env import ParallelEnv
 import gymnasium.utils.seeding as seeding
 from abc import abstractmethod
@@ -25,11 +29,11 @@ class GridEnv:
 
     def add_to(self, ext_net, bus_name):
         self.net.ext_grid.in_service = False
-        net, index = pp.merge_nets(ext_net, self.net, validate=False, 
-                                       return_net2_reindex_lookup=True)
-        substation = pp.get_element_index(net, 'bus', bus_name)
+        net, index = merge_nets(ext_net, self.net, validate=False,
+                                return_net2_reindex_lookup=True)
+        substation = get_element_index(net, 'bus', bus_name)
         ext_grid = index['bus'][self.net.ext_grid.bus.values[0]]
-        pp.fuse_buses(net, ext_grid, substation)
+        fuse_buses(net, ext_grid, substation)
 
         return net
 
@@ -38,7 +42,7 @@ class GridEnv:
             sgens = [sgens]
 
         for sgen in sgens:
-            bus_id = pp.get_element_index(self.net, 'bus', self.name+' '+sgen.bus)
+            bus_id = get_element_index(self.net, 'bus', self.name+' '+sgen.bus)
             pp.create_sgen(self.net, bus_id, p_mw=sgen.state.P, sn_mva=sgen.sn_mva, 
                         index=len(self.sgen), name=self.name+' '+sgen.name, 
                         max_p_mw=sgen.max_p_mw, min_p_mw=sgen.min_p_mw, 
@@ -50,7 +54,7 @@ class GridEnv:
             storages = [storages]
         
         for ess in storages:
-            bus_id = pp.get_element_index(self.net, 'bus', self.name+' '+ess.bus)
+            bus_id = get_element_index(self.net, 'bus', self.name+' '+ess.bus)
             pp.create_storage(self.net, bus_id, ess.state.P, ess.max_e_mwh, 
                             sn_mva=ess.sn_mva, soc_percent=ess.state.soc,
                             min_e_mwh=ess.min_e_mwh, name=self.name+' '+ess.name, 
@@ -60,7 +64,7 @@ class GridEnv:
             self.storage[ess.name] = ess
 
     def load_rescaling(self, net, scale):
-        local_load_ids = pp.get_element_index(net, 'load', self.name, False)
+        local_load_ids = get_element_index(net, 'load', self.name, False)
         net.load.loc[local_load_ids, 'scaling'] *= scale
 
     def step(self, net, action, t):
@@ -81,7 +85,7 @@ class GridEnv:
         for dg in self.sgen.values():
             obs = np.concatenate([obs, dg.state.as_vector()])
         # P, Q at all buses
-        local_load_ids = pp.get_element_index(net, 'load', self.name, False)
+        local_load_ids = get_element_index(net, 'load', self.name, False)
         load_pq = net.res_load.iloc[local_load_ids].values
         obs = np.concatenate([obs, load_pq.ravel() / self.base_power])
         
@@ -130,7 +134,9 @@ class GridEnv:
             dtype=np.float32)
 
     def _combined_action_space(self):
-        low, high, discrete_n = [], [], []
+        low = np.array([], dtype=np.float32)
+        high = np.array([], dtype=np.float32)
+        discrete_n = []
         for sp in self._get_action_space().values():
             if isinstance(sp, Box):
                 low = np.append(low, sp.low)
@@ -155,13 +161,13 @@ class GridEnv:
         solar_scaling = self.dataset['solar'][t]
         wind_sclaing = self.dataset['wind'][t]
 
-        local_ids = pp.get_element_index(net, 'load', self.name, False)
+        local_ids = get_element_index(net, 'load', self.name, False)
         net.load.loc[local_ids, 'scaling'] = load_scaling
         self.load_rescaling(net, self.load_scale)
 
         for name, ess in self.storage.items():
             ess.update_state()
-            local_ids = pp.get_element_index(net, 'storage', self.name+' '+name)
+            local_ids = get_element_index(net, 'storage', self.name+' '+name)
             states = ['p_mw', 'q_mvar', 'soc_percent', 'in_service']
             values = [ess.state.P, ess.state.Q, ess.state.soc, bool(ess.state.on)]
             net.storage.loc[local_ids, states] = values
@@ -169,7 +175,7 @@ class GridEnv:
         for name, dg in self.sgen.items():
             scaling = solar_scaling if dg.type == 'solar' else wind_sclaing
             dg.update_state()
-            local_ids = pp.get_element_index(net, 'sgen', self.name+' '+name)
+            local_ids = get_element_index(net, 'sgen', self.name+' '+name)
             states = ['p_mw', 'q_mvar', 'in_service']
             values = [dg.state.P, dg.state.Q, bool(dg.state.on)]
             net.sgen.loc[local_ids, states] = values
@@ -187,12 +193,12 @@ class GridEnv:
             self.safety += dg.safety
 
         if net["converged"]:
-            local_bus_ids = pp.get_element_index(net, 'bus', self.name, False)
+            local_bus_ids = get_element_index(net, 'bus', self.name, False)
             local_vm = net.res_bus.loc[local_bus_ids].vm_pu.values
             overvoltage = np.maximum(local_vm - 1.05, 0).sum()
             undervoltage = np.maximum(0.95 - local_vm, 0).sum()
 
-            local_line_ids = pp.get_element_index(net, 'line', self.name, False)
+            local_line_ids = get_element_index(net, 'line', self.name, False)
             local_line_loading = net.res_line.loc[local_line_ids].loading_percent.values
             overloading = np.maximum(local_line_loading - 100, 0).sum() * 0.01
             
@@ -297,7 +303,7 @@ class NetworkedGridEnv(ParallelEnv):
 
         # Run power flow for the whole network
         try:
-            pp.runpp(self.net)
+            pp.runpp(self.net, numba=False)
             self.net["converged"] = True
         except Exception:
             self.net["converged"] = False
@@ -324,8 +330,14 @@ class NetworkedGridEnv(ParallelEnv):
         obs = self._get_obs(alive)
 
         # infos: expose safety by default (and converged flag)
-        infos = {name: {"safety": safety.get(name, 0.0), "converged": bool(self.net.get("converged", False))}
-                 for name in alive}
+        infos = {
+            name: {
+                "safety": safety.get(name, 0.0),
+                "operating_cost": float(self._agent_dict[name].cost),
+                "converged": bool(self.net.get("converged", False)),
+            }
+            for name in alive
+        }
 
         # Update PettingZoo live agent list for NEXT step
         self.agents = [a for a in alive if not (terminations.get(a, False) or truncations.get(a, False))]
@@ -347,13 +359,16 @@ class NetworkedGridEnv(ParallelEnv):
             for agent in self._agent_dict.values():
                 agent.reset(self.net, self._t)
         else:
-            if hasattr(self, '_t'):
-                self._day += 1
+            if hasattr(self, '_day'):
+                self._day = (self._day + 1) % self.total_days
             else:
-                self._t, self._day = 0, 0
+                self._day = 0
+            self._t = self._day * self.max_episode_steps
+            for agent in self._agent_dict.values():
+                agent.reset(self.net, self._t)
 
         try:
-            pp.runpp(self.net)
+            pp.runpp(self.net, numba=False)
             self.net["converged"] = True
         except Exception:
             self.net["converged"] = False
@@ -401,4 +416,3 @@ class NetworkedGridEnv(ParallelEnv):
         # PettingZoo uses methods action_space(agent)/observation_space(agent)
         self.action_spaces = ac_spaces
         self.observation_spaces = ob_spaces
-
