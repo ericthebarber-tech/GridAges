@@ -111,9 +111,48 @@ class IEEE13Env(GridBaseEnv):
 
         return reward, safety
 
+# if __name__ == '__main__':
+#     from gridages.envs.single_agent.optimal_power_flow.ieee13_mg import IEEE13Env
+#     env = IEEE13Env(env_config={})
+#     obs, info = env.reset()
+#     action = env.action_space.sample()
+#     obs, reward, terminated, truncated, info = env.step(action)
+
+import pprint  # Built-in module for clean dictionary printing
+
 if __name__ == '__main__':
-    from gridages.envs.single_agent.optimal_power_flow.ieee13_mg import IEEE13Env
+    from gridages.envs.single_agent.microgrid_ems.ieee13_mg import IEEE13Env
+
+    # 1. Initialize environment
     env = IEEE13Env(env_config={})
+
+    print("=== Environment Spaces ===")
+    print("Action Space:", env.action_space)
+    print("Observation Space:", env.observation_space)
+    print("-" * 50)
+
+    # 2. Reset environment
     obs, info = env.reset()
+    print("\n=== Reset Output ===")
+    print("Initial Observation:")
+    pprint.pprint(obs)
+    print("Initial Info:")
+    pprint.pprint(info)
+    print("-" * 50)
+
+    # 3. Sample Action
     action = env.action_space.sample()
+    print("\n=== Sampled Action ===")
+    print("Action:", action)
+    print("-" * 50)
+
+    # 4. Take Step
     obs, reward, terminated, truncated, info = env.step(action)
+    print("\n=== Step Output ===")
+    print("New Observation:")
+    pprint.pprint(obs)
+    print("Reward:", reward)
+    print("Terminated:", terminated)
+    print("Truncated:", truncated)
+    print("Info:")
+    pprint.pprint(info)

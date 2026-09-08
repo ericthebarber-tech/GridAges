@@ -24,10 +24,11 @@ setup(
     zip_safe=False,
     install_requires=[
         "gymnasium>=0.29",
-        "pandapower",
+        "pandapower==2.14.11",
         "numpy",
         "pandas",
         "pettingzoo",  # now first-class
+
     ],
     extras_require={
         "dev": [
@@ -39,10 +40,12 @@ setup(
             "twine",
         ],
         "docs": [
-            "sphinx", 
-            "myst-parser", 
-            "furo", 
-            "sphinx-copybutton"
+            "sphinx",
+            "sphinx-autobuild",
+            "myst-parser",
+            "sphinx-copybutton",
+            "sphinx-design",
+            "furo",
         ],
     },
     keywords=[
