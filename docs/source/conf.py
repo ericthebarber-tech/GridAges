@@ -21,6 +21,7 @@ extensions = [
     "sphinx.ext.mathjax",
     "sphinx_copybutton",
     "sphinx_design",
+    "sphinx.ext.githubpages",
 ]
 
 # Autodoc settings
