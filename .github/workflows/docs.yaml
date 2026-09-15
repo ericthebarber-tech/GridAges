@@ -3,6 +3,7 @@ name: Deploy Sphinx Documentation
 on:
   push:
     branches: ["main"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -26,22 +27,23 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: '3.11'
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install sphinx sphinx-rtd-theme
+          pip install sphinx furo myst-parser sphinx-copybutton sphinx-design
+          pip install -e . --no-deps
 
       - name: Build HTML Docs
         run: |
-          sphinx-build -b html docs/source docs/_build/html
+          sphinx-build -b html docs/source docs/build/html
 
       - name: Upload Artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: 'docs/_build/html'
+          path: 'docs/build/html'
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v4

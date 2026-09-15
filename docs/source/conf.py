@@ -33,6 +33,15 @@ autodoc_default_options = {
     "exclude-members": "__weakref__",
 }
 autodoc_typehints = "description"
+autodoc_mock_imports = [
+    "pandapower",
+    "gymnasium",
+    "pettingzoo",
+    "torch",
+    "scipy",
+    "pandas",
+    "numpy",
+]
 
 # Napoleon settings for Google/NumPy docstrings
 napoleon_google_docstring = True
@@ -84,4 +93,5 @@ myst_enable_extensions = [
     "attrs_block",
 ]
 
+root_doc = "index"
 master_doc = "index"
