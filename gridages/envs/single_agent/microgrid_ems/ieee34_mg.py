@@ -6,7 +6,7 @@ from os.path import dirname, abspath
 from collections import OrderedDict
 
 from gridages.envs.single_agent.base_env import GridBaseEnv
-from gridages.networks.ieee34 import IEEE34Bus
+from gridages.networks.ieee34 import IEEE34Bus, run_ieee34
 from gridages.devices import *
 
 def read_data(train, load_area, renew_area, price_area):
@@ -84,6 +84,19 @@ class IEEE34Env(GridBaseEnv):
         # Provide dataset series (T time steps)
         self.dataset = read_data(self.train, 'AZPS', 'SP15', '0096WD_7_N001')
 
+    def _solve_pf(self) -> bool:
+        """Use the solver provided by the revised balanced IEEE-34 network."""
+        try:
+            run_ieee34(self.net)
+            return bool(
+                self.net.get("converged", False)
+                and self.net.get("ieee34_zip_converged", False)
+            )
+        except Exception:
+            self.net["converged"] = False
+            self.net["ieee34_zip_converged"] = False
+            return False
+
     def _reward_and_safety(self):
         """
         Example:
@@ -92,12 +105,12 @@ class IEEE34Env(GridBaseEnv):
           - Optional penalty coefficient can be passed in cfg['penalty']
         """
         if self.net["converged"]:
-            bus_ids = pp.get_element_index(self.net, 'bus', self.area, False)
+            bus_ids = pp.toolbox.get_element_index(self.net, 'bus', self.area, False)
             vm = self.net.res_bus.loc[bus_ids].vm_pu.values
             overvoltage = np.maximum(vm - 1.05, 0).sum()
             undervoltage = np.maximum(0.95 - vm, 0).sum()
 
-            line_ids = pp.get_element_index(self.net, 'line', self.area, False)
+            line_ids = pp.toolbox.get_element_index(self.net, 'line', self.area, False)
             line_loading = self.net.res_line.loc[line_ids].loading_percent.values
             overloading = np.maximum(line_loading - 100, 0).sum() * 0.01
 
@@ -119,7 +132,7 @@ class IEEE34Env(GridBaseEnv):
 
 
 if __name__ == '__main__':
-    from powergrid.envs.single_agent.ieee34_mg import IEEE34Env
+    from gridages.envs.single_agent.microgrid_ems.ieee34_mg import IEEE34Env
     env = IEEE34Env(env_config={})
     obs, info = env.reset()
     action = env.action_space.sample()

@@ -1,12 +1,13 @@
-# grid_base_env.py
 import abc
 import numpy as np
 import pandapower as pp
+from pandapower.toolbox import get_element_index
 from collections import OrderedDict
 from typing import Dict, Tuple, Iterable, Any, Optional, TypeVar
 
 import gymnasium as gym
 from gymnasium.spaces import Box, MultiDiscrete, Discrete, Dict as SpaceDict
+from gridages.devices import *
 
 from gridages.utils.utils import attach_device_to_net
 
@@ -69,8 +70,27 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
         self.area = None
         self.devices: "OrderedDict[str, Any]" = OrderedDict()
         self.dataset: Dict[str, np.ndarray] = None
-        self.episode_length = int(self.cfg.get("episode_length") or 24)
-        self.t = 0
+
+        # Episode and time bookkeeping.
+        #
+        # data_idx:
+        #     Absolute index into the exogenous dataset (load/solar/wind/price).
+        # step_idx:
+        #     Step within the current Gym episode: 0, ..., episode_length.
+        # time:
+        #     Real-world episode time derived from start_hour + step_idx * dt.
+        self.episode_length = int(
+            self.cfg.get("episode_length", 24)
+        )
+        self.dt = float(
+            self.cfg.get("dt", 1.0)
+        )
+        self.start_hour = float(
+            self.cfg.get("start_hour", 0.0)
+        )
+
+        self.data_idx = 0
+        self.step_idx = 0
 
         # let user build everything
         self._build_net()
@@ -86,6 +106,66 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
         self.action_space = self._build_action_space()
         self.observation_space = self._build_obs_space()
 
+    @property
+    def _time(self) -> float:
+        """Real-world hour represented by the current episode step.
+
+        Time is intentionally not wrapped at 24 hours. For example, with
+        start_hour=8.0 and dt=0.5:
+
+            step_idx = 0   -> time = 8.0   (08:00 today)
+            step_idx = 1   -> time = 8.5   (08:30 today)
+            step_idx = 32  -> time = 24.0  (00:00 next day)
+            step_idx = 48  -> time = 32.0  (08:00 next day)
+        """
+        return self.start_hour + self.step_idx * self.dt
+
+    @property
+    def clock_hour(self) -> float:
+        """Clock hour in [0, 24), useful for display/logging."""
+        return self._time % 24.0
+
+    @property
+    def resources(self):
+        return [agent for agent in self.devices.values() if agent.type in 
+                ['GRID', 'DG', 'CL', 'ESS', 'SCB', 'SOLAR', 'WIND']]
+
+    @property
+    def grid(self):
+        return [agent for agent in self.devices.values() if agent.type in ['GRID']]
+
+    @property
+    def dgs(self):
+        return [agent for agent in self.devices.values() if agent.type in ['DG']]
+
+    @property
+    def evs(self):
+        return [agent for agent in self.devices.values() if agent.type in ['EV']]
+
+    @property
+    def renewables(self):
+        return [agent for agent in self.devices.values() if agent.type in ['SOLAR', 'WIND']]
+
+    @property
+    def batteries(self):
+        return [agent for agent in self.devices.values() if agent.type in ['ESS']]
+
+    @property
+    def tap_changers(self):
+        return [agent for agent in self.devices.values() if agent.type in ['TAP']]
+
+    @property
+    def trafos(self):
+        return [agent for agent in self.devices.values() if agent.type in ['TRANSFORMER']]
+
+    @property
+    def shunt_capacitors(self):
+        return [agent for agent in self.devices.values() if agent.type in ['SCB']]
+
+    @property
+    def switches(self):
+        return [agent for agent in self.devices.values() if agent.type in ['SW']]
+
     def reset(
         self,
         *,
@@ -96,25 +176,47 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
 
         T = self.dataset["load"].size
 
+        # Align episode starts with real-world clock time. The dataset begin 
+        # at 00:00, while start_hour defines the clock time represented
+        # by step_idx = 0.
+        steps_per_day = round(24.0 / self.dt)
+        start_offset = round((self.start_hour % 24.0) / self.dt)
+
         if self.cfg.get("train", False):
-            self.t = self.np_random.integers(
-                T // self.episode_length - 1) * self.episode_length
+            # Sample a calendar day while preserving the requested clock-time
+            # alignment. For dt=0.5 and start_hour=8.0, valid starts are
+            # 16, 64, 112, ...
+            max_day = (T - start_offset - self.episode_length) // steps_per_day
+            if max_day < 0:
+                raise ValueError(
+                    "Dataset is too short for the requested episode_length "
+                    "and start_hour."
+                )
+            day_idx = int(self.np_random.integers(max_day + 1))
+            self.data_idx = start_offset + day_idx * steps_per_day
+        else:
+            pass
+
+        self.step_idx = 0
 
         for dev in self.devices.values():
             if hasattr(dev, "reset"):
                 dev.reset(rnd=self.np_random)
 
-            try:
-                dev.reset(init_soc=0.5)
-            except:
-                pass
+            # try:
+            #     dev.reset(init_soc=0.5)
+            # except:
+            #     pass
 
         self._apply_dataset_scalers()
 
-        obs = self._get_obs()
-        info = {"t": self.t}
+        info = {
+            "data_idx": self.data_idx,
+            "step_idx": self.step_idx,
+            "clock_hour": self.clock_hour,
+        }
 
-        return obs, info
+        return self._get_obs(), info
 
     def step(self, action):
         # set actions into device objects
@@ -134,14 +236,17 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
 
         reward_scale = float(self.cfg.get("reward_scale", 1.0))
         safety_scale = float(self.cfg.get("safety_scale", 0.0))
-        max_penalty = float(self.cfg.get("max_penalty", 0.0)) or None
 
         reward *= reward_scale
-        reward -= np.clip(safety * safety_scale, 0.0, max_penalty)
+        safety *= safety_scale
+        if self.cfg.get("penalize_safety", False):
+            reward -= safety
 
-        # time & termination
-        self.t += 1
-        terminated = (self.t % self.episode_length == 0)
+        # Advance dataset time and episode-relative time independently.
+        self.data_idx += 1
+        self.step_idx += 1
+
+        terminated = self.step_idx >= self.episode_length
         truncated = False
 
         self._apply_dataset_scalers()
@@ -161,30 +266,67 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
             return False
 
     def _apply_dataset_scalers(self):
-        load = float(self.dataset["load"][self.t])
-        solar = float(self.dataset["solar"][self.t])
-        wind  = float(self.dataset["wind"][self.t])
-        price  = float(self.dataset["price"][self.t])
+        load = self.dataset["load"][self.data_idx]
+        solar = self.dataset["solar"][self.data_idx]
+        wind = self.dataset["wind"][self.data_idx]
+        price = self.dataset["price"][self.data_idx]
 
-        load_scaling = load * self.load_scale
-        ids = pp.get_element_index(self.net, "load", self.area, False)
+        load_scaling = load
+
+        # Optional overall multiplier retained for compatibility.
+        load_scaling *= self.load_scale
+
+        ids = get_element_index(
+            self.net,
+            "load",
+            self.area,
+            False,
+        )
         self.net.load.loc[ids, "scaling"] = load_scaling
+
+
+        ##########################################
+        # Ad hoc code
+        self.net.ext_grid.at[0, "vm_pu"] = 1.0 + 0.05 * load_scaling
+        for idx in self.net.shunt.index:
+            name = str(self.net.shunt.at[idx, "name"])
+
+            if "Capacitor 844" in name:
+                self.net.shunt.at[idx, "q_mvar"] = -0.300 * load_scaling
+
+            elif "Capacitor 848" in name:
+                self.net.shunt.at[idx, "q_mvar"] = -0.450 * load_scaling
+
+        for idx in self.net.trafo.index:
+            if "ieee_tap_pos" not in self.net.trafo.columns:
+                continue
+
+            tap_pos = self.net.trafo.at[idx, "ieee_tap_pos"]
+
+            if pp.isnan(tap_pos):
+                self.net.trafo.at[idx, "vn_lv_kv"] = 4.16 * (1.0 + 0.00625 * 5)
+                continue
+
+            ratio = 1.0 + 0.00625 * np.floor(tap_pos * load_scaling)
+            self.net.trafo.at[idx, "vn_lv_kv"] = 24.9 * ratio
+        ##########################################
 
         for name, dev in self.devices.items():
             cls = dev.__class__.__name__
 
             if cls == "RES":
-                scaler = solar if dev.type=="solar" else wind
+                scaler = solar if dev.type == "solar" else wind
                 dev.update_state(scaling=scaler)
 
             elif cls == "Grid":
                 dev.update_state(price=price)
 
+
     def _push_devices_to_net(self):
         for name, dev in self.devices.items():
             tbl, idx = self._pp_refs[name]
             cls = dev.__class__.__name__
-            dev.update_state()
+            dev.update_state(step_idx=self.step_idx)
 
             if cls == "DG":
                 self.net.sgen.at[idx, "p_mw"] = dev.state.P
@@ -197,12 +339,12 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
                 if "q_mvar" in self.net.sgen.columns:
                     self.net.sgen.at[idx, "q_mvar"] = dev.state.Q
 
-            elif cls == "ESS":
+            elif cls == "ESS" or cls == "EV":
                 self.net.storage.at[idx, "p_mw"] = dev.state.P
                 if hasattr(dev.state, "Q"):
                     self.net.storage.at[idx, "q_mvar"] = dev.state.Q
                 self.net.storage.at[idx, "soc_percent"] = dev.state.soc * 100.0
-                self.net.storage.at[idx, "in_service"] = bool(dev.state.on)
+                self.net.storage.at[idx, "in_service"] = dev.state.on
 
             elif cls == "Shunt":
                 step = int(dev.state.step)
@@ -250,7 +392,9 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
           }
         """
         info: Dict[str, Any] = {
-            "t": self.t,
+            "data_idx": self.data_idx,
+            "step_idx": self.step_idx,
+            "clock_hour": self.clock_hour,
             "converged": converged,
         }
 
@@ -271,7 +415,7 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
 
         # Bus voltage in this area
         if "bus_voltage" in wanted and hasattr(self.net, "res_bus") and len(self.net.res_bus):
-            bus_ids = pp.get_element_index(self.net, "bus", self.area, False)
+            bus_ids = get_element_index(self.net, "bus", self.area, False)
             if bus_ids is not None and len(bus_ids):
                 v = self.net.res_bus.loc[bus_ids, "vm_pu"].values.astype(np.float32)
 
@@ -279,14 +423,14 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
                     info["bus_voltage"] = v
 
                 if store_summ and v.size:
-                    info["bus_voltage_mean"] = float(v.mean())
-                    info["bus_voltage_min"] = float(v.min())
-                    info["bus_voltage_max"] = float(v.max())
-                    info["bus_voltage_viol_count"] = float(np.sum((v < 0.95) | (v > 1.05)))
+                    info["bus_voltage_mean"] = v.mean()
+                    info["bus_voltage_min"] = v.min()
+                    info["bus_voltage_max"] = v.max()
+                    info["bus_voltage_viol_count"] = np.sum((v < 0.95) | (v > 1.05))
 
         # Line loading in this area
         if "line_loading" in wanted and hasattr(self.net, "res_line") and len(self.net.res_line):
-            line_ids = pp.get_element_index(self.net, "line", self.area, False)
+            line_ids = get_element_index(self.net, "line", self.area, False)
             if line_ids is not None and len(line_ids):
                 l = self.net.res_line.loc[line_ids, "loading_percent"].values.astype(np.float32)
 
@@ -294,9 +438,9 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
                     info["line_loading"] = l
 
                 if store_summ and l.size:
-                    info["line_loading_mean"] = float(l.mean())
-                    info["line_loading_max"] = float(l.max())
-                    info["line_over_100_count"] = float(np.sum(l > 100.0))
+                    info["line_loading_mean"] = l.mean()
+                    info["line_loading_max"] = l.max()
+                    info["line_over_100_count"] = np.sum(l > 100.0)
 
         return info
 
@@ -376,6 +520,40 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
                 dev.action.d[:] = vals.astype(np.int32)
                 d_ofs += d_len
 
+    def _get_history(self, key: str, history_steps: int) -> np.ndarray:
+        """
+        Return the most recent `history_steps` samples ending at data_idx.
+
+        Example for history_steps=4:
+            [x[t-3], x[t-2], x[t-1], x[t]]
+
+        At the beginning of the dataset, pad using the earliest available value.
+        """
+        x = np.asarray(self.dataset[key], dtype=np.float32)
+
+        end = int(self.data_idx) + 1
+        start = end - history_steps
+
+        if start >= 0:
+            history = x[start:end]
+        else:
+            available = x[0:end]
+
+            if available.size:
+                pad_value = available[0]
+            else:
+                pad_value = 0.0
+
+            padding = np.full(
+                -start,
+                pad_value,
+                dtype=np.float32,
+            )
+
+            history = np.concatenate([padding, available])
+
+        return history.astype(np.float32)
+
     def _get_obs(self) -> np.ndarray:
         """Default observation: 
             concat device states + 
@@ -387,31 +565,55 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
 
         # device states
         for dev in self.devices.values():
-            obs = np.concatenate([obs, dev.state.as_vector().astype(np.float32)])
+            if isinstance(dev, EV):
+                if dev.connected:
+                    obs = np.concatenate([obs, dev.state.as_vector().astype(np.float32)])
+                    obs = np.append(obs, (dev.depart_time - self.step_idx) / 48)
+                else:
+                    obs = np.concatenate([obs, np.zeros_like(dev.state.as_vector()).astype(np.float32)])
+                    obs = np.append(obs, 0.0)
 
-        # bus voltages (vm, va) after PF
-        if hasattr(self.net, "res_bus") and self.net["converged"]:
-            vm = self.net.res_bus["vm_pu"].values.astype(np.float32)
-            va = self.net.res_bus["va_degree"].values.astype(np.float32)
-        else:
-            vm = np.ones(len(self.net.bus), dtype=np.float32)
-            va = np.zeros(len(self.net.bus), dtype=np.float32)
+        # # bus voltages (vm, va) after PF
+        # if hasattr(self.net, "res_bus") and self.net["converged"]:
+        #     vm = self.net.res_bus["vm_pu"].values.astype(np.float32)
+        #     va = self.net.res_bus["va_degree"].values.astype(np.float32)
+        # else:
+        #     vm = np.ones(len(self.net.bus), dtype=np.float32)
+        #     va = np.zeros(len(self.net.bus), dtype=np.float32)
 
-        obs = np.concatenate([obs, vm, va])
+        # obs = np.concatenate([obs, 10 * (vm - 1.0)])
+        # obs = np.concatenate([obs, vm, va])
 
-        # loads P,Q (after PF)
-        pq = self.net.load[["p_mw", "q_mvar"]].values
-        scaling = self.net.load[['scaling']].values
-        obs = np.concatenate([obs, (pq * scaling).ravel() / self.base_power])
+        # # loads P,Q (after PF)
+        # pq = self.net.load[["p_mw", "q_mvar"]].values
+        # scaling = self.net.load[['scaling']].values
+        # obs = np.concatenate([obs, (pq * scaling).ravel() / self.base_power])
 
-        # line loading
-        if hasattr(self.net, "res_line") and self.net["converged"]:
-            line_loading = self.net.res_line[
-                "loading_percent"].values.astype(np.float32)
-        else:
-            line_loading = np.zeros(len(self.net.line), dtype=np.float32)
+        # # line loading
+        # if hasattr(self.net, "res_line") and self.net["converged"]:
+        #     line_loading = self.net.res_line[
+        #         "loading_percent"].values.astype(np.float32)
+        # else:
+        #     line_loading = np.zeros(len(self.net.line), dtype=np.float32)
 
-        obs = np.concatenate([obs, (line_loading / 100.)])
+        # obs = np.concatenate([obs, (line_loading / 100.)])
+
+        history_steps = self.cfg.get("history_steps", 12)
+
+        load_history = self._get_history("load", history_steps)
+        solar_history = self._get_history("solar", history_steps)
+        # price_history = self._get_history("price", history_steps) * 0.01
+
+        obs = np.concatenate(
+            [
+                obs,
+                load_history,
+                solar_history,
+                # price_history,
+            ]
+        )
+
+        obs = np.append(obs, float(self.clock_hour) / 24.0)
 
         return obs.astype(np.float32)
 
@@ -421,5 +623,3 @@ class GridBaseEnv(gym.Env, metaclass=abc.ABCMeta):
     def _build_obs_space(self):
         shape = self._get_obs().shape
         return Box(low=-np.inf, high=np.inf, shape=shape, dtype=np.float32)
-
-

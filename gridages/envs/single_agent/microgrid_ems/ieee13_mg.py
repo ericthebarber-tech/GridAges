@@ -1,8 +1,6 @@
-import os, pickle
 import numpy as np
 import pandapower as pp
 
-from os.path import dirname, abspath
 from collections import OrderedDict
 
 from gridages.envs.single_agent.base_env import GridBaseEnv
@@ -86,12 +84,12 @@ class IEEE13Env(GridBaseEnv):
           - Optional penalty coefficient can be passed in cfg['penalty']
         """
         if self.net["converged"]:
-            bus_ids = pp.get_element_index(self.net, 'bus', self.area, False)
+            bus_ids = pp.toolbox.get_element_index(self.net, 'bus', self.area, False)
             vm = self.net.res_bus.loc[bus_ids].vm_pu.values
             overvoltage = np.maximum(vm - 1.05, 0).sum()
             undervoltage = np.maximum(0.95 - vm, 0).sum()
 
-            line_ids = pp.get_element_index(self.net, 'line', self.area, False)
+            line_ids = pp.toolbox.get_element_index(self.net, 'line', self.area, False)
             line_loading = self.net.res_line.loc[line_ids].loading_percent.values
             overloading = np.maximum(line_loading - 100, 0).sum() * 0.01
 
@@ -111,48 +109,9 @@ class IEEE13Env(GridBaseEnv):
 
         return reward, safety
 
-# if __name__ == '__main__':
-#     from gridages.envs.single_agent.optimal_power_flow.ieee13_mg import IEEE13Env
-#     env = IEEE13Env(env_config={})
-#     obs, info = env.reset()
-#     action = env.action_space.sample()
-#     obs, reward, terminated, truncated, info = env.step(action)
-
-import pprint  # Built-in module for clean dictionary printing
-
 if __name__ == '__main__':
     from gridages.envs.single_agent.microgrid_ems.ieee13_mg import IEEE13Env
-
-    # 1. Initialize environment
     env = IEEE13Env(env_config={})
-
-    print("=== Environment Spaces ===")
-    print("Action Space:", env.action_space)
-    print("Observation Space:", env.observation_space)
-    print("-" * 50)
-
-    # 2. Reset environment
     obs, info = env.reset()
-    print("\n=== Reset Output ===")
-    print("Initial Observation:")
-    pprint.pprint(obs)
-    print("Initial Info:")
-    pprint.pprint(info)
-    print("-" * 50)
-
-    # 3. Sample Action
     action = env.action_space.sample()
-    print("\n=== Sampled Action ===")
-    print("Action:", action)
-    print("-" * 50)
-
-    # 4. Take Step
     obs, reward, terminated, truncated, info = env.step(action)
-    print("\n=== Step Output ===")
-    print("New Observation:")
-    pprint.pprint(obs)
-    print("Reward:", reward)
-    print("Terminated:", terminated)
-    print("Truncated:", truncated)
-    print("Info:")
-    pprint.pprint(info)
